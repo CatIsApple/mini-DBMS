@@ -25,13 +25,19 @@ build/bptree-test: tests/bptree_test.cpp src/bptree.hpp | build
 build/engine-test: tests/engine_test.cpp $(CORE)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
+build/datom-bench: bench/benchmark.cpp $(CORE)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
 test: all build/sql-test build/bptree-test build/engine-test
 	./build/sql-test
 	./build/bptree-test
 	./build/engine-test
 
+bench: build/datom-bench
+	./build/datom-bench
+
 clean:
 	rm -rf build
 
-.PHONY: all test clean
+.PHONY: all test bench clean
 -include $(wildcard build/*.d)
