@@ -2,7 +2,11 @@
 
 SQL을 직접 파싱하고 실행하는 Python 파일 기반 데이터베이스입니다. Python 3.11 이상과 표준 라이브러리로 실행할 수 있습니다.
 
-![CLI와 HTTP API가 공통 SQL 엔진으로 들어가고, 저장과 두 가지 조회 경로를 통해 테이블 파일을 사용하는 흐름도](docs/architecture.png)
+## 계층 구조
+
+![Mini DBMS 계층도. Phase 3 API, Phase 1 SQL 처리, Phase 2 인덱스, 파일 저장 계층 순서와 선형 탐색 경로](docs/architecture.png)
+
+그림은 API에서 인덱스를 사용하는 ID 조회가 **Phase 3 → Phase 1 → Phase 2 → 파일 저장 계층**을 거치는 순서를 보여줍니다. CLI는 SQL 처리 계층으로 바로 들어갑니다. 인덱스가 적용되지 않는 조회는 오른쪽 선형 탐색 경로를 따라갑니다.
 
 ## Phase 1 · SQL 파일 실행
 
