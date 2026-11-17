@@ -9,7 +9,7 @@
 
 namespace datom {
 
-enum class AccessPath { None, SequentialScan };
+enum class AccessPath { None, SequentialScan, IndexLookup };
 
 struct Result {
     std::vector<std::string> columns;

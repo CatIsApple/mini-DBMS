@@ -64,18 +64,18 @@ void test_schema_and_queries() {
     check(ins.tag == "INSERT 0 3" && ins.access == AccessPath::None, "insert tag and access path");
     auto hit = run(engine, "select email,id,name from users where id = +002");
     const std::vector<Row> bob{{"bob@test", "2", "Bob"}};
-    check(hit.columns == Row{"email", "id", "name"} && hit.rows == bob, "projected row");
-    check(hit.access == AccessPath::SequentialScan && hit.rows_examined == 3, "id scan metrics");
+    check(hit.columns == Row{"email", "id", "name"} && hit.rows == bob, "projected index row");
+    check(hit.access == AccessPath::IndexLookup && hit.rows_examined == 1, "index hit metrics");
 
     const auto scan = run(engine, "select email,id,name from users where email = 'bob@test'");
-    check(scan.rows == hit.rows && scan.tag == "SELECT 1", "matching predicates return identical rows");
+    check(scan.rows == hit.rows && scan.tag == "SELECT 1", "scan and index return identical rows");
     check(scan.access == AccessPath::SequentialScan && scan.rows_examined == 3, "scan metrics");
     const auto several = run(engine, "select id from users where name = 'Ada'");
     check(several.rows == std::vector<Row>{{"1"}, {"3"}}, "all matching rows from scan");
     for (const char* missing_id : {"0", "-3", "4"}) {
         const auto miss = run(engine, std::string("select id from users where id = ") + missing_id);
-        check(miss.rows.empty() && miss.access == AccessPath::SequentialScan && miss.rows_examined == 3,
-              "missing id scans all rows");
+        check(miss.rows.empty() && miss.access == AccessPath::IndexLookup && miss.rows_examined == 0,
+              "index miss must not read file rows");
     }
 
     for (const auto& entry : std::vector<std::pair<const char*,const char*>>{
@@ -94,7 +94,7 @@ void test_schema_and_queries() {
     check(run(engine, "select * from users").rows.size() == 3, "failed insert changed table");
     run(engine, "insert into users values ('after','z')");
     check(run(engine, "select name from users where id = 4").rows == std::vector<Row>{{"after"}},
-          "failed insert consumed an id");
+          "failed insert consumed an id or changed the index");
 }
 
 void test_table_isolation_and_restart() {
@@ -111,10 +111,10 @@ void test_table_isolation_and_restart() {
     {
         Engine reopened(temp.path);
         auto product = run(reopened, "select name,sku from products where id=1");
-        check(product.rows == std::vector<Row>{{"p1","s1"}},
-              "restored product row");
+        check(product.access == AccessPath::IndexLookup && product.rows == std::vector<Row>{{"p1","s1"}},
+              "restored product index");
         check(run(reopened, "select name from users where id=1").rows == std::vector<Row>{{"u1"}},
-              "restored user row");
+              "restored user index");
         run(reopened, "insert into users values ('u3','e3')");
         run(reopened, "insert into products values ('p2','s2')");
         check(run(reopened, "select name from products where id=2").rows == std::vector<Row>{{"p2"}},
@@ -141,7 +141,7 @@ void test_incomplete_frame() {
           "torn batch became partly visible");
     run(recovered, "insert into users values ('next','2')");
     check(run(recovered, "select name from users where id=2").rows == std::vector<Row>{{"next"}},
-          "ID sequence after recovery");
+          "index/ID sequence after recovery");
 }
 
 void test_corruption_refused() {
@@ -196,8 +196,8 @@ void test_parallel_statements() {
     const auto rows = run(engine, "select * from users").rows;
     check(rows.size() == 2 * writers * repeats, "lost concurrent writes");
     for (std::size_t i = 0; i < rows.size(); ++i) {
-        const auto match = run(engine, "select * from users where id=" + std::to_string(i + 1));
-        check(match.rows == std::vector<Row>{rows[i]}, "concurrent persisted row mismatch");
+        const auto indexed = run(engine, "select * from users where id=" + std::to_string(i + 1));
+        check(indexed.rows == std::vector<Row>{rows[i]}, "concurrent index/file mismatch");
     }
 }
 

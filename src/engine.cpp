@@ -1,4 +1,5 @@
 #include "engine.hpp"
+#include "bptree.hpp"
 
 #include <algorithm>
 #include <array>
@@ -105,6 +106,18 @@ void write_at(int fd, std::size_t offset, std::string_view bytes) {
         if (!written) throw DbError("58030", "no progress writing table");
         offset += static_cast<std::size_t>(written);
         bytes.remove_prefix(static_cast<std::size_t>(written));
+    }
+}
+
+void read_at(int fd, std::size_t offset, char* dst, std::size_t count) {
+    while (count) {
+        auto n = ::pread(fd, dst, count, static_cast<off_t>(offset));
+        if (n == -1 && errno == EINTR) continue;
+        if (n == -1) io_error("read table");
+        if (!n) corrupt(offset);
+        dst += n;
+        offset += static_cast<std::size_t>(n);
+        count -= static_cast<std::size_t>(n);
     }
 }
 
@@ -238,6 +251,7 @@ struct Table {
     Schema schema;
     File table;
     std::shared_mutex mutex;
+    std::unique_ptr<BPlusTree> index;
     std::size_t committed = 0;
     std::uint64_t last_id = 0;
     bool available = true;
@@ -254,6 +268,7 @@ struct Table {
     }
 
     void rebuild() {
+        auto next = std::make_unique<BPlusTree>();
         std::uint64_t latest = 0;
         auto length = file_size(table.get());
         std::size_t end;
@@ -261,10 +276,12 @@ struct Table {
             Mapping map(table.get(), length);
             end = scan(map.bytes(), true, [&](const DiskRow& row, std::size_t offset) {
                 if (row.id != latest + 1 || row.id > max_id) corrupt(offset);
+                next->insert(row.id, offset);
                 latest = row.id;
             });
         }
         if (end != length) truncate_to(table.get(), end);
+        index = std::move(next);
         last_id = latest;
         committed = end;
     }
@@ -285,30 +302,49 @@ struct Table {
         if (stmt.where) filter = schema.column_of(stmt.where->column);
         const bool by_id = filter == Column::Id;
         auto id = by_id ? parse_id(stmt.where->value) : 0;
-        result.access = AccessPath::SequentialScan;
+        result.access = by_id ? AccessPath::IndexLookup : AccessPath::SequentialScan;
 
-        // Later appends cannot affect committed bytes inside this snapshot.
+        // Committed bytes are immutable. Copy the EOF and any matching offset
+        // together; later appends cannot affect this statement's snapshot.
         std::size_t snapshot_end;
+        std::optional<std::uint64_t> offset;
         {
             std::shared_lock lock(mutex);
             check_available();
             snapshot_end = committed;
+            if (by_id && id > 0) offset = index->find(static_cast<std::uint64_t>(id));
         }
 
         if (sink) sink->columns(result.columns);
         std::uint64_t returned = 0;
-        Mapping map(table.get(), snapshot_end);
-        auto end = scan(map.bytes(), false, [&](const DiskRow& row, std::size_t) {
-            ++result.rows_examined;
-            if (by_id && (id <= 0 || row.id != static_cast<std::uint64_t>(id))) return;
-            if (filter == Column::First && row.first != stmt.where->value) return;
-            if (filter == Column::Second && row.second != stmt.where->value) return;
+        auto emit = [&](const DiskRow& row) {
             auto output = project(projection, row);
             if (sink) sink->row(output);
             else result.rows.push_back(std::move(output));
             ++returned;
-        });
-        if (end != snapshot_end) corrupt(end);
+        };
+        if (offset) {
+            char head[row_header_size];
+            if (*offset > snapshot_end || snapshot_end - *offset < row_header_size) corrupt(*offset);
+            read_at(table.get(), *offset, head, sizeof(head));
+            auto size = text_size(head);
+            if (u64(head) != static_cast<std::uint64_t>(id) || size > max_payload ||
+                size > snapshot_end - *offset - row_header_size) corrupt(*offset);
+            std::string record(row_header_size + size, '\0');
+            std::memcpy(record.data(), head, sizeof(head));
+            read_at(table.get(), *offset + row_header_size, record.data() + row_header_size, size);
+            emit(unpack_row(record, *offset));
+            ++result.rows_examined;
+        } else if (!by_id) {
+            Mapping map(table.get(), snapshot_end);
+            auto end = scan(map.bytes(), false, [&](const DiskRow& row, std::size_t) {
+                ++result.rows_examined;
+                if (filter && (filter == Column::First ? row.first : row.second) != stmt.where->value)
+                    return;
+                emit(row);
+            });
+            if (end != snapshot_end) corrupt(end);
+        }
         result.tag = "SELECT " + std::to_string(returned);
         return result;
     }
@@ -347,8 +383,11 @@ struct Table {
 
         auto id = last_id;
         std::size_t pos = header_size;
+        std::vector<std::size_t> offsets;
+        offsets.reserve(stmt.values.size());
         for (const auto& values : stmt.values) {
             ++id;
+            offsets.push_back(committed + pos);
             const auto& first = values[first_at];
             const auto& second = values[second_at];
             char* head = frame.data() + pos;
@@ -362,19 +401,24 @@ struct Table {
         }
         std::memcpy(frame.data(), frame_magic.data(), frame_magic.size());
         put32(frame.data() + 4, static_cast<std::uint32_t>(payload_size));
-        put32(frame.data() + 8, static_cast<std::uint32_t>(stmt.values.size()));
+        put32(frame.data() + 8, static_cast<std::uint32_t>(offsets.size()));
         put32(frame.data() + 12, checksum(std::string_view(frame).substr(header_size, payload_size)));
         put32(frame.data() + 16, checksum(std::string_view(frame).substr(0, 16)));
         std::memcpy(frame.data() + pos, commit_marker.data(), commit_marker.size());
 
+        bool touched_index = false;
         try {
             write_at(table.get(), committed, frame);
             sync_file(table.get());
+            touched_index = true;
+            auto key = last_id;
+            for (auto offset : offsets) index->insert(++key, offset);
         } catch (...) {
             // Never expose half of a failed write. If the rollback itself fails,
             // all subsequent requests must wait for a fresh recovery.
             try {
                 truncate_to(table.get(), committed);
+                if (touched_index) rebuild();
             } catch (...) {
                 available = false;
                 throw;

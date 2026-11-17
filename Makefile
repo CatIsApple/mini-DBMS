@@ -19,11 +19,15 @@ build/datom: build/cli.o $(CORE)
 build/sql-test: tests/sql_test.cpp build/sql.o
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
+build/bptree-test: tests/bptree_test.cpp src/bptree.hpp | build
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
+
 build/engine-test: tests/engine_test.cpp $(CORE)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-test: all build/sql-test build/engine-test
+test: all build/sql-test build/bptree-test build/engine-test
 	./build/sql-test
+	./build/bptree-test
 	./build/engine-test
 
 clean:
