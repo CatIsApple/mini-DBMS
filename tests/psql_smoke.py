@@ -7,18 +7,20 @@ import re
 import select
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 
-TIMEOUT = 10
+TIMEOUT = 20
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 @contextlib.contextmanager
-def temporary_server(binary, directory):
+def temporary_server(command, directory):
     process = subprocess.Popen(
-        [binary, "--data", directory, "--port", "0", "--workers", "2"],
-        stdout=subprocess.PIPE, text=True,
+        [*command, "--data", directory, "--port", "0", "--workers", "2"],
+        stdout=subprocess.PIPE, text=True, cwd=PROJECT_ROOT,
     )
     try:
         if not select.select([process.stdout], [], [], TIMEOUT)[0]:
@@ -44,7 +46,7 @@ def run_script(psql, port, directory, sql):
     script.write_text(sql, encoding="utf-8")
     # Ignore user profiles, libpq service files and ambient connection settings.
     environment = {k: v for k, v in os.environ.items() if not k.startswith("PG")}
-    environment.update(HOME=str(directory), LC_ALL="C", PGCLIENTENCODING="UTF8",
+    environment.update(LC_ALL="C", PGCLIENTENCODING="UTF8",
                        PGCONNECT_TIMEOUT="5", PGGSSENCMODE="disable", PGSSLMODE="prefer")
     return subprocess.run(
         [psql, "-X", "-w", "-h", "127.0.0.1", "-p", port, "-U", "tester", "-d", "datom",
@@ -64,15 +66,16 @@ def expect_output(result, expected):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--server", type=Path, required=True)
-    parser.add_argument("--psql", required=True)
+    parser.add_argument("--server", type=Path, help="override the default python -m datom.server")
+    parser.add_argument("--psql", default="psql", help="psql executable name or path")
     args = parser.parse_args()
     psql = shutil.which(args.psql)
     if psql is None:
         parser.error(f"psql executable not found: {args.psql}")
+    server = [args.server.resolve()] if args.server else [sys.executable, "-m", "datom.server"]
     with tempfile.TemporaryDirectory(prefix="datom-psql-") as tmp:
         directory = Path(tmp)
-        with temporary_server(args.server.resolve(), directory / "db") as port:
+        with temporary_server(server, directory / "db") as port:
             initial = run_script(psql, port, directory, """
                 INSERT INTO users (name, email) VALUES
                     ('김다온', 'first@test'), ('O''Brien;서울', 'second@test');

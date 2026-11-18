@@ -8,13 +8,15 @@ import select
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
 
 
-TIMEOUT = 8
+TIMEOUT = 20
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def encode_frame(tag, payload):
@@ -133,32 +135,34 @@ def sql_error(messages, sqlstate):
     assert any(field.startswith(b"M") and len(field) > 1 for field in fields), fields
 
 
-def cli_run(binary, data, sql, success=True):
+def cli_run(command, data, sql, success=True):
     script = data.parent / "queries.sql"
     script.write_text(sql, encoding="utf8")
-    proc = subprocess.run([binary, "--data", data, "-f", script],
-                          capture_output=True, text=True, timeout=TIMEOUT)
+    proc = subprocess.run([*command, "--data", data, "-f", script],
+                          capture_output=True, text=True, timeout=TIMEOUT,
+                          cwd=PROJECT_ROOT)
     assert (proc.returncode == 0) == success, (sql, proc.stdout, proc.stderr)
     return proc.stdout.splitlines()
 
 
-def cli_checks(binary, data):
-    directory = subprocess.run([binary, "--data", data, "-f", data.parent],
-                               capture_output=True, text=True, timeout=TIMEOUT)
+def cli_checks(command, data):
+    directory = subprocess.run([*command, "--data", data, "-f", data.parent],
+                               capture_output=True, text=True, timeout=TIMEOUT,
+                               cwd=PROJECT_ROOT)
     assert directory.returncode != 0 and "directory" in directory.stderr, directory
-    assert cli_run(binary, data, "") == []
-    lines = cli_run(binary, data, """
+    assert cli_run(command, data, "") == []
+    lines = cli_run(command, data, """
         -- The semicolon inside the name belongs to the string.
         INSERT INTO users (email, name) VALUES
             ('first@test','김;O''Brien'), ('second@test','두번째');
         SELECT id, name FROM users WHERE id = 1;
     """)
     assert lines == ["INSERT 0 2", "id\tname", "1\t김;O'Brien", "SELECT 1"], lines
-    lines = cli_run(binary, data, "SELECT email FROM users WHERE name = '김;O''Brien';")
+    lines = cli_run(command, data, "SELECT email FROM users WHERE name = '김;O''Brien';")
     assert lines == ["email", "first@test", "SELECT 1"], lines
-    cli_run(binary, data, "INSERT INTO users VALUES ('bad', 'ok'), ('short');", False)
-    cli_run(binary, data, "SELECT * FROM missing;", False)
-    lines = cli_run(binary, data, "SELECT id FROM users;")
+    cli_run(command, data, "INSERT INTO users VALUES ('bad', 'ok'), ('short');", False)
+    cli_run(command, data, "SELECT * FROM missing;", False)
+    lines = cli_run(command, data, "SELECT id FROM users;")
     assert lines[:1] == ["id"] and sorted(lines[1:-1]) == ["1", "2"] and lines[-1] == "SELECT 2", lines
 
 
@@ -254,8 +258,9 @@ def snapshot_during_write(port):
 
 
 def server_checks(cli, server, data):
-    proc = subprocess.Popen([server, "--data", data, "--port", "0", "--workers", "3"],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen([*server, "--data", data, "--port", "0", "--workers", "3"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            cwd=PROJECT_ROOT)
     try:
         ready, _, _ = select.select([proc.stdout], [], [], TIMEOUT)
         assert ready, "server did not announce its port"
@@ -290,10 +295,11 @@ def server_checks(cli, server, data):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cli", type=Path, required=True)
-    parser.add_argument("--server", type=Path, required=True)
+    parser.add_argument("--cli", type=Path, help="override the default python -m datom")
+    parser.add_argument("--server", type=Path, help="override the default python -m datom.server")
     args = parser.parse_args()
-    cli, server = args.cli.resolve(), args.server.resolve()
+    cli = [args.cli.resolve()] if args.cli else [sys.executable, "-m", "datom"]
+    server = [args.server.resolve()] if args.server else [sys.executable, "-m", "datom.server"]
     with tempfile.TemporaryDirectory(prefix="datom-test-") as tmp:
         data = Path(tmp) / "db"
         cli_checks(cli, data)
