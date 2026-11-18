@@ -1,4 +1,11 @@
 """Executor: schema loading, type checking, query planning (B+ tree vs full scan)."""
+
+#parser.py에서 토큰화된걸 AST로 만들어서 engine.py에서 Select, Insert를 받아서 실행함. run 에서 insert인지 Select인지 확인하고 각각 _insert, _select로 넘김. _insert, _select에서 각각 실행함.
+#schema.json을 읽어서 테이블과 컬럼을 확인하고, 타입을 체크하고, B+ tree를 이용한 인덱스 조회와 전체 스캔을 결정함. 결과는 Result 객체로 반환됨.
+#보고 storage.py에서 Table 객체를 이용해서 실제 데이터를 읽고 쓰는 부분을 처리함.
+
+
+#인덱스 쓸지 전체 스캔할지 결정하는 부분임. B+ tree를 이용한 인덱스 조회와 전체 스캔을 결정함. 결과는 Result 객체로 반환됨.
 import json
 import math
 import operator
@@ -111,7 +118,7 @@ class Database:
                 raise
         return results
 
-    def run(self, stmt):
+    def run(self, stmt): #이게 실행의 핵심 부분임. Insert인지 Select인지 확인하고 각각 _insert, _select로 넘김
         return self._insert(stmt) if isinstance(stmt, Insert) else self._select(stmt)
 
     def _table(self, name):

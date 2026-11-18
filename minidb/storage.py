@@ -5,6 +5,12 @@ Record format, one per line:  [id,"col1",col2,...]\n
 - Index is rebuilt from the file on open (a torn last line from a crash is dropped).
 - Concurrency: many readers or one writer (RWLock); readers use their own file handle.
 """
+#engine.py에서 Select, Insert를 받아서 실행함. run 에서 insert인지 Select인지 확인하고 각각 _insert, _select로 넘김. _insert, _select에서 각각 실행함.
+#만약 에러가 있다면 errors .py에 정의된 ExecutionError를 발생시킴.
+
+#서버를 시작할때 _load()해서 인덱스 재구성 함
+
+#잠금은 RWLock을 이용해서 구현함. 여러 reader가 동시에 읽을 수 있고, writer는 하나만 가능함. reader는 각자 file handle을 사용함.
 import json
 import os
 import threading

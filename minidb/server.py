@@ -10,6 +10,10 @@ Architecture: one accept thread -> bounded queue -> N worker threads, each handl
 connection at a time (HTTP/1.0, no keep-alive). Queue full -> immediate 503 (back-pressure).
 All workers share one Database; per-table RW locks provide the concurrency control.
 """
+
+#API 로 받아서 실행하는 부분임
+#접수 , 큐 , 스레드 풀 까지 하고
+#요청을 처리하는 부분임. POST /query 로 SQL을 받아서 실행하고 결과를 반환함. GET /tables 로 스키마를 확인하고, GET /health 로 풀 상태를 확인함.
 import argparse
 import json
 import queue

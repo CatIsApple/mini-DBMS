@@ -3,6 +3,7 @@
 Insert-only. Delete is not needed by the engine (tables are append-only).
 Not thread-safe; the table's RW lock guards it.
 """
+#여기서 B+ tree를 구현함. B+ tree는 insert-only임. delete는 필요없음. 테이블은 append-only이기 때문임. thread-safe하지 않음. table의 RW lock이 이를 보호함.
 from bisect import bisect_left, bisect_right
 
 

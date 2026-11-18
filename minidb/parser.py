@@ -6,6 +6,7 @@ Grammar (case-insensitive keywords, `--` comments, `;` separated):
   expr := and (OR and)* ; and := atom (AND atom)*
   atom := ( expr ) | col (=|!=|<>|<|<=|>|>=) value | col IS [NOT] NULL
 """
+# tokenize 가 토큰화 시키는거임 쪼개진걸 _parser가 재귀적으로 파싱해서 AST를 만들어줌. AST는 Select, Insert로 구성됨. 그러곤 engine.py에서 Select, Insert를 받아서 실행함.
 import re
 from dataclasses import dataclass
 
@@ -42,7 +43,7 @@ class Select:
     explain: bool
 
 
-def tokenize(sql):
+def tokenize(sql): #토큰화
     out = []
     for m in _TOKEN.finditer(sql):
         kind, text = m.lastgroup, m.group()

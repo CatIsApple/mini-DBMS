@@ -4,6 +4,8 @@
   python -m minidb.cli -d data -e "SELECT * FROM users WHERE id = 1"
   python -m minidb.cli -d data            # interactive (or pipe SQL on stdin)
 """
+
+#이게 SQL 을 받아서 하는 부분임 parser.py 에서 토큰화하고 engine.py 에서 실행함.
 import argparse
 import json
 import sys
