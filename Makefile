@@ -2,7 +2,7 @@ PYTHON ?= python3
 PSQL ?= psql
 
 all:
-	$(PYTHON) -m compileall -q datom
+	$(PYTHON) -m compileall -q datom bench
 
 test:
 	$(PYTHON) -m unittest discover -s tests -p 'test_*.py'
@@ -11,4 +11,7 @@ test:
 test-psql:
 	$(PYTHON) tests/psql_smoke.py --psql "$(PSQL)"
 
-.PHONY: all test test-psql
+bench:
+	$(PYTHON) -m bench.benchmark
+
+.PHONY: all test test-psql bench
